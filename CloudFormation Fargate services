@@ -1,0 +1,465 @@
+Hello,
+This is a CloudFormation template that is designed to create all the needed resources for AWS Fargate serverless services 
+that run Apache, Mysql docker containers. 
+They are assigned to a Load Balancer that can be used with a DNS record of our choice.
+
+There will be AutoScaling group for the Fargate services that is monitoring the health of the LoadBalancer HealthChecks,
+and if not healthy,a new one will be created.
+
+Monitoring can be done via AWS CloudWatch, and loggroups are created to monitor the events.
+
+Please understand that this is still in progress.
+This is still not finished. The AutoScaling group resources(actions,alarms) will be added as a next step.
+
+
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Parameters": {
+        "KeyName": {
+            "Type": "AWS::EC2::KeyPair::KeyName",
+            "Description": "Name of an existing EC2 KeyPair to enable SSH access to the ECS instances."
+        },
+        "VpcId": {
+            "Type": "AWS::EC2::VPC::Id",
+            "Description": "Select a VPC"
+        },
+        "SubnetId": {
+            "Type": "List<AWS::EC2::Subnet::Id>",
+            "Description": "Select at two subnets in your selected VPC."
+        },
+		"EcsSecurityGroupList": {
+            "Type": "List<AWS::EC2::SecurityGroup::Id>",
+            "Description": "Select Security Groups in your selected VPC."
+        },
+        "DesiredCapacity": {
+            "Type": "Number",
+            "Default": "1",
+            "Description": "Number of instances to launch in your ECS cluster."
+        },
+        "MaxSize": {
+            "Type": "Number",
+            "Default": "1",
+            "Description": "Maximum number of instances that can be launched in your ECS cluster."
+        }},
+    "Resources": {
+        "ECSCluster": {
+            "Type": "AWS::ECS::Cluster",
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "9308af96-a5b9-42e2-9d6c-e1fbe8a74f7f"
+                }
+            }
+        },
+        "EcsSecurityGroup": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupDescription": "ECS Security Group",
+                "VpcId": {
+                    "Ref": "VpcId"
+                }
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "cdde5b2a-547e-4b1b-8e1a-4fa80983c5f8"
+                }
+            }
+        },
+        "EcsSecurityGroupHTTPinbound": {
+            "Type": "AWS::EC2::SecurityGroupIngress",
+            "Properties": {
+                "GroupId": {
+                    "Ref": "EcsSecurityGroup"
+                },
+                "IpProtocol": "tcp",
+                "FromPort": "80",
+                "ToPort": "80",
+                "CidrIp": "0.0.0.0/0"
+            }
+        },
+        "EcsSecurityGroupSSHinbound": {
+            "Type": "AWS::EC2::SecurityGroupIngress",
+            "Properties": {
+                "GroupId": {
+                    "Ref": "EcsSecurityGroup"
+                },
+                "IpProtocol": "tcp",
+                "FromPort": "22",
+                "ToPort": "22",
+                "CidrIp": "0.0.0.0/0"
+            }
+        },
+        "EcsSecurityGroupALBports": {
+            "Type": "AWS::EC2::SecurityGroupIngress",
+            "Properties": {
+                "GroupId": {
+                    "Ref": "EcsSecurityGroup"
+                },
+                "IpProtocol": "tcp",
+                "FromPort": "31000",
+                "ToPort": "61000",
+                "SourceSecurityGroupId": {
+                    "Ref": "EcsSecurityGroup"
+                }
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "02761d1a-1679-402a-a2df-5deef917ab4b"
+                }
+            }
+        },
+        "CloudwatchLogsGroup": {
+            "Type": "AWS::Logs::LogGroup",
+            "Properties": {
+                "LogGroupName": {
+                    "Fn::Join": [
+                        "-",
+                        [
+                            "ECSLogGroup",
+                            {
+                                "Ref": "AWS::StackName"
+                            }
+                        ]
+                    ]
+                },
+                "RetentionInDays": 14
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "cf4a5628-50ea-4072-873b-c22cbfd7c900"
+                }
+            }
+        },
+		
+        "taskdefinition": {
+            "Type": "AWS::ECS::TaskDefinition",
+            "Properties": {
+				"ExecutionRoleArn": "arn:aws:iam::740650266824:role/ecsTaskExecutionRole",
+				"NetworkMode": "awsvpc",
+				"Cpu": 256,
+				"Memory" : 512,
+			    "RequiresCompatibilities": [
+					"EC2",
+					"FARGATE"
+				],
+                "Family": {
+                    "Fn::Join": [
+                        "",
+                        [
+                            {
+                                "Ref": "AWS::StackName"
+                            },
+                            "-ecs-testdemo-app"
+                        ]
+                    ]
+                },
+        "ContainerDefinitions": [
+    {
+        "LogConfiguration": {
+        "LogDriver": "awslogs",
+        "Options": {
+          "awslogs-group": "/ecs/apache123",
+          "awslogs-region": "eu-central-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      },
+      "EntryPoint": [
+        "sh",
+        "-c"
+      ],
+      "PortMappings": [
+        {
+          "ContainerPort": 80,
+          "Protocol": "tcp"
+        }
+      ],
+      "Command": [
+        "/bin/sh -c \"echo '<html> <head> <title>Amazon ECS Container</title> <style>body {margin-top: 40px; background-color: #333;} </style> </head><body> <div style=color:white;text-align:center> <h1>Amazon ECS Container</h1> <h2>Congratulations Gospodine!</h2> <p>Your application is now running on a container in Amazon ECS.</p> </div></body></html>' > /usr/local/apache2/htdocs/index.html && httpd-foreground\""
+      ],
+      "Cpu": 100,
+	  "Memory" : 128,
+      "Environment": [],
+      "MountPoints": [
+        {
+          "ContainerPath": "/usr/local/apache2/htdocs/",
+          "SourceVolume": "my-vol"
+        }
+      ],
+      "Image": "httpd:latest",
+      "Essential": true,
+      "ReadonlyRootFilesystem": false,
+      "Name": "apache"
+    }
+  ],
+                "Volumes": [
+                            {
+                                "Name": "my-vol"
+                            }
+                        ]
+                    }      
+            },
+		"taskdefinitionmysql": {
+            "Type": "AWS::ECS::TaskDefinition",
+            "Properties": {
+				"ExecutionRoleArn": "arn:aws:iam::740650266824:role/ecsTaskExecutionRole",
+				"NetworkMode": "awsvpc",
+				"Cpu": 256,
+				"Memory" : 512,
+			    "RequiresCompatibilities": [
+					"EC2",
+					"FARGATE"
+				],
+                "Family": {
+                    "Fn::Join": [
+                        "",
+                        [
+                            {
+                                "Ref": "AWS::StackName"
+                            },
+                            "-ecs-testdemo-mysql"
+                        ]
+                    ]
+                },
+        "ContainerDefinitions": [
+    {
+        "LogConfiguration": {
+        "LogDriver": "awslogs",
+        "Options": {
+          "awslogs-group": "/ecs/mysql123",
+          "awslogs-region": "eu-central-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      },
+      "PortMappings": [
+        {
+          "ContainerPort": 3306,
+          "Protocol": "tcp"
+        }
+      ],
+      "Cpu": 100,
+	  "Memory" : 128,
+      "Environment": [],
+      "Image": "mysql:latest",
+      "Essential": true,
+      "ReadonlyRootFilesystem": false,
+      "Name": "mysql"
+    }
+  ],
+                "Volumes": [
+                            {
+                                "Name": "mysql-vol"
+                            }
+                        ]
+                    }      
+            },
+        "TESTECSALB": {
+            "Type": "AWS::ElasticLoadBalancingV2::LoadBalancer",
+            "Properties": {
+                "Name": "TESTECSALB",
+                "Scheme": "internet-facing",
+                "LoadBalancerAttributes": [
+                    {
+                        "Key": "idle_timeout.timeout_seconds",
+                        "Value": "30"
+                    }
+                ],
+                "Subnets": {
+                    "Ref": "SubnetId"
+                },
+                "SecurityGroups": [
+                    {
+                        "Ref": "EcsSecurityGroup"
+                    }
+                ]
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "68516536-85e4-4fae-a11e-b4c21ddaf0a7"
+                }
+            }
+        },
+		"ALBListener": {
+            "Type": "AWS::ElasticLoadBalancingV2::Listener",
+            "DependsOn": "ECSServiceRole",
+            "Properties": {
+                "DefaultActions": [
+                    {
+                        "Type": "forward",
+                        "TargetGroupArn": {
+                            "Ref": "ECSTG"
+                        }
+                    }
+                ],
+                "LoadBalancerArn": {
+                    "Ref": "TESTECSALB"
+                },
+                "Port": "80",
+                "Protocol": "HTTP"
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "94291785-e986-4071-89fe-5c12d24ff574"
+                }
+            }
+        },
+        "TESTECSALBListenerRule": {
+            "Type": "AWS::ElasticLoadBalancingV2::ListenerRule",
+            "DependsOn": "ALBListener",
+            "Properties": {
+                "Actions": [
+                    {
+                        "Type": "forward",
+                        "TargetGroupArn": {
+                            "Ref": "ECSTG"
+                        }
+                    }
+                ],
+                "Conditions": [
+                    {
+                        "Field": "path-pattern",
+                        "Values": [
+                            "/"
+                        ]
+                    }
+                ],
+                "ListenerArn": {
+                    "Ref": "ALBListener"
+                },
+                "Priority": 1
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "84c52414-319e-4920-b575-f8a713eaa7a3"
+                }
+            }
+        },
+        "ECSTG": {
+            "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+            "DependsOn": "TESTECSALB",
+            "Properties": {
+                "HealthCheckIntervalSeconds": 10,
+                "HealthCheckPath": "/",
+                "HealthCheckProtocol": "HTTP",
+                "HealthCheckTimeoutSeconds": 5,
+                "HealthyThresholdCount": 2,
+                "Name": "ECSTG",
+                "Port": 80,
+                "Protocol": "HTTP",
+				"TargetType": "ip",
+                "UnhealthyThresholdCount": 2,
+                "VpcId": {
+                    "Ref": "VpcId"
+                }
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Designer": {
+                    "id": "6a8e03a2-bede-4856-82e4-7568d806c98c"
+                }
+            }
+        },
+		"service": {
+            "Type": "AWS::ECS::Service",
+            "DependsOn": "ALBListener",
+            "Properties": {
+                "Cluster": {
+                    "Ref": "ECSCluster"
+                },
+                "DesiredCount": "1",
+				"LaunchType": "FARGATE",
+                "LoadBalancers": [
+                    {
+                        "ContainerName": "apache",
+                        "ContainerPort": "80",
+                        "TargetGroupArn": {
+                            "Ref": "ECSTG"
+                        }
+                    }
+                ],
+                "TaskDefinition": {
+                    "Ref": "taskdefinition"
+                },
+				"NetworkConfiguration": {
+					"AwsvpcConfiguration": {
+						"Subnets": {
+						"Fn::Split": [
+                        ",",
+							{"Fn::Join": [
+                        ",",  { "Ref": "SubnetId" }]}]}, 
+						"SecurityGroups": {
+						"Fn::Split": [
+                        ",",
+							{"Fn::Join": [
+                        ",",  { "Ref": "EcsSecurityGroupList" }]}]},  
+						"AssignPublicIp": "ENABLED"
+					}
+				} 
+            }},
+		"servicemysql": {
+            "Type": "AWS::ECS::Service",
+            "DependsOn": "ALBListener",
+            "Properties": {
+                "Cluster": {
+                    "Ref": "ECSCluster"
+                },
+                "DesiredCount": "1",
+				"LaunchType": "FARGATE",
+                "TaskDefinition": {
+                    "Ref": "taskdefinitionmysql"
+                },
+				"NetworkConfiguration": {
+					"AwsvpcConfiguration": {
+						"Subnets": {
+						"Fn::Split": [
+                        ",",
+							{"Fn::Join": [
+                        ",",  { "Ref": "SubnetId" }]}]}, 
+						"SecurityGroups": {
+						"Fn::Split": [
+                        ",",
+							{"Fn::Join": [
+                        ",",  { "Ref": "EcsSecurityGroupList" }]}]},  
+						"AssignPublicIp": "ENABLED"
+					}
+				} 
+            }},
+		"ECSServiceRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "ecs.amazonaws.com"
+                                ]
+                            },
+                            "Action": [
+                                "sts:AssumeRole"
+                            ]
+                        }
+                    ]
+                },
+                "Path": "/",
+                "Policies": [
+                    {
+                        "PolicyName": "test-ecs-service",
+                        "PolicyDocument": {
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "elasticloadbalancing:DeregisterInstancesFromLoadBalancer",
+                                        "elasticloadbalancing:DeregisterTargets",
+                                        "elasticloadbalancing:Describe*",
+                                        "elasticloadbalancing:RegisterInstancesWithLoadBalancer",
+                                        "elasticloadbalancing:RegisterTargets",
+                                        "ec2:Describe*",
+                                        "ec2:AuthorizeSecurityGroupIngress"
+                                    ],
+                                    "Resource": "*"
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }}}}
